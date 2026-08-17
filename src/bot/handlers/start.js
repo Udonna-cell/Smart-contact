@@ -24,7 +24,9 @@ export const handleStart = async (ctx) => {
                 ]).reply_markup
             }
         );
-    } else if (user.status === 'UNPAID') {
+    } else if (user.status === 'BLOCKED') {
+        ctx.reply('❌ *Your account has been blocked.*', { parse_mode: 'Markdown' });
+    } else if (user.status !== 'ACTIVE') {
         ctx.reply(
             '⚠️ *Account Status: Inactive*\n\n' +
             'Your account is currently inactive. Please complete the activation to start earning.',
