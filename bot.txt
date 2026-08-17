@@ -1,0 +1,365 @@
+================================================================================
+PRODUCTION SPECIFICATION & MASTER INSTRUCTION PROMPT
+PROJECT: NGN Referral & Subscription Rewards Telegram Bot
+TECH STACK: Node.js, Telegraf (v4+), MySQL (mysql2 / Knex or Prisma), Express (for Paystack webhooks/health check), Paystack API
+================================================================================
+
+[SYSTEM PROMPT FOR AI CODING AGENT / DEVELOPER]
+You are an expert Senior Full-Stack Node.js Engineer specializing in Telegram Bot development using Telegraf.js and financial / referral ledger systems. Your objective is to build a production-ready, highly robust, scalable, and secure Telegram Bot based on the specification detailed below.
+
+Write clean, modular, modern ES module (or CommonJS with clean structure) code with strict error handling, session management, database migrations, security checks, and logging.
+
+--------------------------------------------------------------------------------
+1. PROJECT OVERVIEW & CORE BUSINESS LOGIC
+--------------------------------------------------------------------------------
+The application is a Telegram Bot that operates an automated referral reward network with manual Nigerian Naira (NGN) fiat bank deposit verification.
+
+Key Financial & System Mechanics:
+1. Registration / Joining Fee:
+   - Cost: 1000 NGN.
+   - Initial Slots Included: 5 referral slots.
+   - Initial Referral Reward Rate: 50% (500 NGN total base share: 400 NGN to direct referrer, 100 NGN to indirect referrer, 500 NGN retained by protocol treasury).
+
+2. Referral Reward Payouts:
+   - Direct Referrals (Level 1): 40% (400 NGN) default share, scalable with upgrades.
+   - Indirect Referrals (Level 2): 10% (100 NGN) passive reward to secondary referrer.
+   - Total Base Payout = 50% (500 NGN).
+
+3. System Upgrades:
+   - Slot Upgrade: Purchase +5 additional referral slots for 500 NGN.
+   - Rate Boost Upgrade: Purchase +10% payout share boost for 500 NGN.
+   - Rate Boost Ceiling / Hard Cap: Maximum reward rate capped at 70% (or 7000 basis points) to guarantee protocol liquidity and prevent contract/treasury draining.
+
+4. Unclaimed / Out-of-Slot Overflow:
+   - If a referrer has 0 available slots when a referred friend deposits, 100% of the deposit fee is captured by the Protocol Treasury.
+   - The system alerts the referrer that they missed a referral reward due to insufficient slots and prompts them to buy more slots.
+
+5. Paystack Gateway Deposit & Admin Verification Flow:
+   - User requests deposit (1000 NGN for activation, slot purchase, or rate upgrade).
+   - Bot calls Paystack Initialize Transaction API (`https://api.paystack.co/transaction/initialize`) with `amount = 100000` (kobo), `email`, and a unique Paystack reference.
+   - Bot provides the generated Paystack payment link to the user along with an inline button `[✅ I Have Paid]`.
+   - When user clicks `[✅ I Have Paid]`, the bot updates the deposit status to `PENDING_ADMIN_CONFIRMATION` and dispatches an instant notification to the Admin Telegram Group / Chat.
+   - Admin Notification Content:
+     - User Telegram ID & Username
+     - Amount Paid (₦1,000)
+     - Unique Paystack Reference Code
+     - Inline Buttons: `[✅ Confirm]` | `[❌ Reject]`
+   - Upon Admin Confirmation:
+     a) User status updated to 'ACTIVE' (if registration deposit) or user slots/rate upgraded.
+     b) Referral commission computed & distributed to direct/indirect uplines.
+     c) User notified immediately via Telegram message.
+   - Upon Admin Rejection:
+     a) Account remains 'UNPAID' / unverified.
+     b) User notified that payment was rejected.
+
+6. Withdrawals:
+   - Minimum withdrawal threshold: 1,000 NGN.
+   - User inputs Nigerian Bank Name, Account Number, and Account Holder Name.
+   - User submits withdrawal request -> Admin receives request with [MARK PAID] / [DECLINE] buttons.
+
+--------------------------------------------------------------------------------
+2. TECHNICAL ARCHITECTURE & FOLDER STRUCTURE
+--------------------------------------------------------------------------------
+Create the following project structure:
+
+referral-rewards-bot/
+├── package.json
+├── .env.example
+├── .gitignore
+├── src/
+│   ├── index.js                  # Main entry point (Telegraf bot launch & Express server)
+│   ├── config/
+│   │   ├── env.js                # Environment variable loader and validator
+│   │   └── constants.js          # Business logic constants (pricing, caps, limits)
+│   ├── database/
+│   │   ├── connection.js         # Database initialization (SQLite / Knex / Prisma)
+│   │   ├── schema.sql            # Table definitions
+│   │   └── repositories/
+│   │       ├── userRepository.js
+│   │       ├── depositRepository.js
+│   │       ├── referralRepository.js
+│   │       └── withdrawalRepository.js
+│   ├── bot/
+│   │   ├── instance.js           # Telegraf instance setup & middleware attachment
+│   │   ├── middlewares/
+│   │   │   ├── auth.js           # Ensures user exists in DB
+│   │   │   ├── admin.js          # Restricts commands to Admin Telegram IDs
+│   │   │   └── rateLimiter.js    # Prevents command spam
+│   │   ├── scenes/
+│   │   │   ├── depositWizard.js  # WizardScene for deposit flow & receipt submission
+│   │   │   ├── withdrawWizard.js # WizardScene for bank payout requests
+│   │   │   └── upgradeWizard.js  # WizardScene for purchasing slots / rate boosts
+│   │   ├── handlers/
+│   │   │   ├── start.js          # /start command & deep-linking referral parsing
+│   │   │   ├── menu.js           # Main navigation dashboard & inline buttons
+│   │   │   ├── admin.js          # Admin inline button callbacks (Approve/Reject deposits & payouts)
+│   │   │   └── stats.js          # User earnings & team breakdown
+│   │   └── keyboards/
+│   │       ├── replyKeyboards.js # Persistent navigation menu
+│   │       └── inlineKeyboards.js# Action buttons (Upgrades, Approve/Reject, Receipts)
+│   └── utils/
+│       ├── logger.js             # Winston or Pino logger
+│       ├── generator.js          # Reference code generator
+│       └── formatters.js         # NGN currency & date formatting helpers
+└── README.md
+
+--------------------------------------------------------------------------------
+3. DATABASE SCHEMA (SQL DESIGN)
+--------------------------------------------------------------------------------
+Implement the database tables using MySQL (InnoDB engine, utf8mb4) with proper indexes:
+
+1. `users` Table:
+   - `telegram_id` (BIGINT, PRIMARY KEY)
+   - `username` (VARCHAR, NULLABLE)
+   - `first_name` (VARCHAR)
+   - `status` (ENUM: 'UNPAID', 'ACTIVE', 'BLOCKED') DEFAULT 'UNPAID'
+   - `referrer_id` (BIGINT, NULLABLE, FK -> users.telegram_id)
+   - `slots_available` (INT) DEFAULT 5
+   - `referral_rate_bps` (INT) DEFAULT 4000 (40.00% direct share in basis points)
+   - `balance_ngn` (DECIMAL(12,2)) DEFAULT 0.00
+   - `total_earned_ngn` (DECIMAL(12,2)) DEFAULT 0.00
+   - `total_withdrawn_ngn` (DECIMAL(12,2)) DEFAULT 0.00
+   - `total_referrals` (INT) DEFAULT 0
+   - `created_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+
+2. `deposits` Table:
+   - `id` (VARCHAR/UUID, PRIMARY KEY)
+   - `telegram_id` (BIGINT, FK -> users.telegram_id)
+   - `type` (ENUM: 'ACTIVATION', 'BUY_SLOTS', 'UPGRADE_RATE')
+   - `amount_ngn` (DECIMAL(12,2)) NOT NULL
+   - `reference_code` (VARCHAR, UNIQUE, NOT NULL)
+   - `proof_file_id` (VARCHAR, NULLABLE) -- Telegram File ID for photo/receipt
+   - `sender_name` (VARCHAR, NULLABLE)
+   - `status` (ENUM: 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED') DEFAULT 'PENDING'
+   - `admin_notes` (TEXT, NULLABLE)
+   - `created_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+   - `updated_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+
+3. `referral_payouts` Table:
+   - `id` (VARCHAR/UUID, PRIMARY KEY)
+   - `deposit_id` (VARCHAR, FK -> deposits.id)
+   - `beneficiary_id` (BIGINT, FK -> users.telegram_id)
+   - `payer_id` (BIGINT, FK -> users.telegram_id)
+   - `level` (INT) -- 1 for direct, 2 for indirect
+   - `amount_ngn` (DECIMAL(12,2))
+   - `rate_applied_bps` (INT)
+   - `created_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+
+4. `withdrawals` Table:
+   - `id` (VARCHAR/UUID, PRIMARY KEY)
+   - `telegram_id` (BIGINT, FK -> users.telegram_id)
+   - `amount_ngn` (DECIMAL(12,2)) NOT NULL
+   - `bank_name` (VARCHAR) NOT NULL
+   - `account_number` (VARCHAR) NOT NULL
+   - `account_name` (VARCHAR) NOT NULL
+   - `status` (ENUM: 'PENDING', 'PAID', 'DECLINED') DEFAULT 'PENDING'
+   - `created_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+
+5. `bank_accounts` Table:
+   - `id` (INT, PRIMARY KEY, AUTO_INCREMENT)
+   - `bank_name` (VARCHAR) NOT NULL
+   - `account_number` (VARCHAR) NOT NULL
+   - `account_name` (VARCHAR) NOT NULL
+   - `is_active` (BOOLEAN) DEFAULT TRUE
+   - `created_at` (TIMESTAMP) DEFAULT CURRENT_TIMESTAMP
+
+
+--------------------------------------------------------------------------------
+4. DETAILED IMPLEMENTATION STEPS FOR THE AI AGENT
+--------------------------------------------------------------------------------
+
+STEP 1: PROJECT INITIALIZATION & ENVIRONMENT SETUP
+- Initialize npm project: `npm init -y`
+- Dependencies to install:
+  - `telegraf` (v4.x)
+  - `dotenv`
+  - `mysql2` (or `knex` / `prisma` configured for MySQL)
+  - `express`
+  - `axios` (for Paystack API calls)
+  - `winston`
+  - `nanoid`
+- Create `.env` configuration file containing:
+  - `BOT_TOKEN` (From BotFather)
+  - `ADMIN_TELEGRAM_IDS` (Comma-separated IDs, e.g. 12345678,87654321)
+  - `ADMIN_CHANNEL_ID` (Telegram group/channel ID where admin approval requests are routed)
+  - `PAYSTACK_SECRET_KEY`
+  - `PAYSTACK_PUBLIC_KEY`
+  - `PORT` (for Express health check endpoint)
+
+STEP 2: BOT NAVIGATION & USER FLOWS
+1. `/start [refCode]` Command (Role-Based Layout Engine):
+   - Check `ctx.from.id` against `ADMIN_TELEGRAM_IDS` array (or database admin table).
+   - IF USER IS AN ADMIN:
+     a. Render Admin Dashboard Layout with custom persistent Reply Keyboard:
+        [ 📥 Pending Approvals | 🏦 Manage Banks ]
+        [ 🔍 Search User | 📢 Broadcast ]
+        [ 📈 Protocol Stats | 👤 Switch to User View ]
+     b. Display welcome message: "👑 Welcome Admin [Name]. Select an action from the dashboard below."
+   - IF USER IS A REGULAR USER:
+     a. Parse start payload for `refCode` (Telegram ID of referrer).
+     b. If user is new, insert into `users` table with `referrer_id` = `refCode` (prevent self-referral where `refCode` == `user.telegram_id`).
+     c. If account status is 'UNPAID': Display Welcome message explaining the 1000 NGN fee, 5 referral slots, and inline button `[💳 Activate Account (₦1000)]`.
+     d. If account status is 'ACTIVE': Display User Main Menu persistent Reply Keyboard:
+        [ 📊 Dashboard | 👥 My Team ]
+        [ ⚡ Upgrades | 💸 Withdraw ]
+        [ ❓ Help & Support ]
+
+STEP 3: PAYSTACK DEPOSIT WIZARD SCENE (`depositWizard.js`)
+- Step 1: User clicks Register / Activate or Upgrade button.
+- Step 2: Bot calls Paystack API (`POST /transaction/initialize`):
+  - Payload: `{ email: userEmail, amount: 100000, reference: uniqueRef, callback_url: "https://yourdomain.com/paystack/callback" }`
+- Step 3: Bot displays output message:
+  "💳 *Paystack Payment Checkout*
+
+Please tap the button below to pay ₦1,000 via Paystack.
+
+Reference: `${uniqueRef}`"
+  Inline Keyboard:
+  `[🔗 Pay ₦1,000 via Paystack (URL)]`
+  `[✅ I Have Paid]`
+- Step 4: User clicks `[✅ I Have Paid]`:
+  a. Save deposit record in `deposits` table with `status = 'PENDING_ADMIN_CONFIRMATION'`, `paystack_ref = uniqueRef`.
+  b. Edit message to user: "⏳ *Payment Notification Received!* Admin is verifying your payment reference `${uniqueRef}`. You will be notified once confirmed."
+  c. Send alert to `ADMIN_CHANNEL_ID`:
+     "📥 *NEW PAYSTACK DEPOSIT VERIFICATION REQUEST*
+
+"
+     "👤 User: @username (ID: `12345678`)
+"
+     "💰 Amount: ₦1,000
+"
+     "📌 Paystack Ref: `${uniqueRef}`
+"
+     "Type: ACTIVATION
+
+"
+     Inline Keyboard: `[✅ Confirm Deposit]` | `[❌ Reject Deposit]`
+
+STEP 4: ADMIN APPROVAL HANDLER LOGIC (`admin.js`)
+When Admin clicks `[✅ Approve]`:
+1. Retrieve deposit record inside a database transaction.
+2. If `deposit.status !== 'PENDING'`, respond with warning "Transaction already processed."
+3. Update `deposit.status = 'APPROVED'`.
+4. Handle deposit type execution:
+   - IF `ACTIVATION`:
+     a. Set user `status = 'ACTIVE'`.
+     b. Trigger `distributeReferralCommission(userId, depositId)`.
+   - IF `BUY_SLOTS`:
+     a. Increment user `slots_available += 5`.
+   - IF `UPGRADE_RATE`:
+     a. Check current rate. If `referral_rate_bps >= 6000` (60%), reject upgrade attempt or set max cap at 60% (direct) + 10% (indirect) = 70% total cap.
+     b. Increment `referral_rate_bps += 1000` (+10%).
+5. Notify Admin: Edit channel message to show "Approved by Admin @admin_username".
+6. Notify User via Telegram: Send confirmation message that deposit was verified and features unlocked.
+
+When Admin clicks `[❌ Reject]`:
+1. Prompt Admin for optional rejection reason (or default "Payment not found in bank records").
+2. Update `deposit.status = 'REJECTED'`.
+3. Notify user via Telegram with reason.
+
+STEP 5: REFERRAL COMMISSION DISTRIBUTION ALGORITHM
+Function `distributeReferralCommission(payerId, depositId)`:
+1. Fetch payer record to find `referrer_id` (Level 1 Upline).
+2. IF `referrer_id` exists:
+   a. Fetch Level 1 referrer from `users`.
+   b. Check if Level 1 referrer has `slots_available > 0`:
+      - IF YES:
+        - Direct Rate = `referrer.referral_rate_bps` (Default 4000 = 40% = 400 NGN).
+        - Direct Earned = (1000 NGN * Direct Rate) / 10000.
+        - Credit Level 1 referrer `balance_ngn += Direct Earned`, `total_earned_ngn += Direct Earned`.
+        - Deduct Level 1 referrer `slots_available -= 1`.
+        - Record in `referral_payouts` table.
+        - Send Telegram notification to Level 1 referrer: "🎉 You earned ₦400 from a direct referral! Slots remaining: X".
+      - IF NO (0 slots remaining):
+        - 0 NGN paid to referrer.
+        - Send Telegram notification to Level 1 referrer: "⚠️ You missed a ₦400 referral bonus because you have 0 slots remaining! Tap 'Upgrades' to buy more slots."
+   
+   c. Check for Level 2 Upline (`referrer.referrer_id`):
+      - IF Level 2 referrer exists and status == 'ACTIVE':
+        - Indirect Rate = 1000 basis points (10% = 100 NGN).
+        - Credit Level 2 referrer `balance_ngn += 100 NGN`, `total_earned_ngn += 50 NGN`.
+        - Record in `referral_payouts` table.
+        - Send Telegram notification to Level 2 referrer: "🚀 You earned ₦50 passive income from a Level 2 team referral!".
+
+STEP 6: WITHDRAWAL SCENE & PAYSTACK TRANSFERS (`withdrawWizard.js`)
+1. User clicks `💸 Withdraw`.
+2. Check if `user.balance_ngn < 1000`:
+   - If under threshold, cancel and notify: "Minimum withdrawal is ₦1,000. Current balance: ₦X".
+3. Prompt user to select/input:
+   - Bank Code / Bank Name (Select from Paystack Bank list API `/bank`)
+   - 10-digit NGN Account Number
+4. Perform Paystack Account Name Resolution API (`GET /bank/resolve?account_number=X&bank_code=Y`):
+   - Confirm verified Account Name with user.
+5. Save pending withdrawal request and deduct user `balance_ngn`.
+6. Send payout alert to `ADMIN_CHANNEL_ID`:
+   "💸 *NEW WITHDRAWAL REQUEST*
+
+"
+   "👤 User: @username
+"
+   "💰 Amount: ₦X,XXX
+"
+   "🏦 Bank: Bank Name (Code)
+"
+   "🔢 Account: 1234567890
+"
+   "👤 Name: Verified Account Name
+
+"
+   Inline Keyboard: `[⚡ Pay via Paystack Transfer]` | `[❌ Decline & Refund]`
+7. Upon Admin clicking `[⚡ Pay via Paystack Transfer]`:
+   a. Create Transfer Recipient (`POST /transferrecipient`).
+   b. Initiate Paystack Transfer (`POST /transfer`).
+   c. Mark status = 'PAID' and send confirmation message to user with Paystack transfer reference.
+8. If Admin declines: Refund `balance_ngn` to user wallet.
+
+--------------------------------------------------------------------------------
+5. SECURITY, ANTI-ABUSE & PRODUCTION CHECKLIST
+--------------------------------------------------------------------------------
+1. Database Transactions: Wrap all financial updates (balance additions, slot deductions, deposit approvals) in SQL transactions (`START TRANSACTION / COMMIT (MySQL InnoDB transactions)`) to prevent race conditions.
+2. Rate Limiting: Apply `telegraf-throttler` or custom session middleware to restrict command spam (max 2 commands per second per user).
+3. Self-Referral Prevention: Check that `payer_id !== referrer_id` during registration and start parsing.
+4. Input Sanitization: Escape string inputs in text prompts to prevent injection attack vectors.
+5. Error Handling: Enclose all bot middleware in `try...catch` blocks and set `bot.catch((err, ctx) => ...)` to ensure the bot process never crashes silently.
+6. Express Health Check: Create an Express server listening on `process.env.PORT` with endpoint `/health` returning `{ status: "ok" }` for continuous uptime monitoring (e.g. UptimeRobot or Render / Railway keep-alive pinging).
+7. Process Manager: Include a `ecosystem.config.js` or Dockerfile for PM2 auto-restart on deployment.
+
+--------------------------------------------------------------------------------
+6. EXECUTION INSTRUCTIONS FOR THE AI
+--------------------------------------------------------------------------------
+Execute the task by generating the full project code files:
+1. Create `package.json` with all required dependencies and start scripts.
+2. Create `.env.example` file.
+3. Write `src/database/schema.sql` and `src/database/connection.js`.
+4. Build all repositories (`userRepository`, `depositRepository`, `referralRepository`, `withdrawalRepository`).
+5. Write all Telegraf Scenes (`depositWizard`, `withdrawWizard`, `upgradeWizard`).
+6. Write Handlers (`start`, `menu`, `admin`, `stats`).
+7. Write `src/index.js` combining express health-check server and telegraf bot startup logic.
+8. Ensure code is fully commented, production-ready, and error-handled.
+================================================================================
+
+
+--------------------------------------------------------------------------------
+7. DYNAMIC ADMIN PANEL & IN-BOT MANAGEMENT ARCHITECTURE
+--------------------------------------------------------------------------------
+The bot must strictly differentiate between standard User layouts and Admin layouts.
+
+Admin Authentication & Role Middleware (`src/bot/middlewares/admin.js`):
+- Check incoming `ctx.from.id` against `ADMIN_TELEGRAM_IDS` loaded from environment / database.
+- If user is an Admin, render an extended "Admin Dashboard" menu with administrative controls.
+
+In-Bot Admin Features:
+1. Dynamic Bank Account Management:
+   - Admin can view, add, edit, or toggle active status of payment bank accounts via Telegram UI (`/admin_banks`).
+   - Store bank details in a dynamic `bank_accounts` table instead of hardcoding in `.env`.
+   - When users start a deposit, query active bank accounts from DB.
+
+2. Deposit & Withdrawal Review Hub:
+   - Admin receives real-time inline notifications for pending deposits/withdrawals in the Admin Channel/Chat.
+   - Admin can also type `/pending` in the bot to cycle through all pending deposits/withdrawals with pagination.
+
+3. User & System Management Tools:
+   - Search User: Look up any user by Telegram ID or `@username` to view full referral history, total earned, current slots, and status.
+   - Manual Balance Adjustments: Admin can manually credit or debit a user's wallet balance.
+   - Broadcast System: Send broadcast announcements to all registered users (or active users only) directly via the bot interface.
+   - Global System Analytics: View protocol stats (Total Revenues, Total Commissions Paid, Active Users, Unclaimed Overflow Revenue).
