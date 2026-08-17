@@ -26,6 +26,8 @@ export const depositWizard = new Scenes.WizardScene(
                 headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` }
             });
 
+            console.log('Paystack API Response:', response.data);
+
             ctx.wizard.state.depositData.paystack_reference = response.data.data.reference;
             ctx.wizard.state.depositData.paystack_url = response.data.data.authorization_url;
 
@@ -35,7 +37,7 @@ export const depositWizard = new Scenes.WizardScene(
                 `Reference: \`${ctx.wizard.state.depositData.reference_code}\``,
                 {
                     parse_mode: 'Markdown',
-                    ...Markup.inlineKeyboard([
+                    reply_markup: Markup.inlineKeyboard([
                         Markup.button.url('🔗 Pay via Paystack', ctx.wizard.state.depositData.paystack_url),
                         Markup.button.callback('✅ I Have Paid', 'confirm_payment')
                     ]).reply_markup
