@@ -32,7 +32,7 @@ export const handleStart = async (ctx) => {
             'Your account is currently inactive. Please complete the activation to start earning.',
             {
                 parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
+                reply_markup: Markup.inlineKeyboard([
                     Markup.button.callback('💳 Activate Account (₦1,000)', 'start_deposit')
                 ]).reply_markup
             }
