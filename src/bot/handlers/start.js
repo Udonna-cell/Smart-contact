@@ -19,9 +19,9 @@ export const handleStart = async (ctx) => {
             'To get started, please activate your account:',
             {
                 parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
+                ...Markup.inlineKeyboard([
                     Markup.button.callback('💳 Activate Account (₦1,000)', 'start_deposit')
-                ]).reply_markup
+                ])
             }
         );
     } else if (user.status === 'BLOCKED') {
@@ -32,9 +32,9 @@ export const handleStart = async (ctx) => {
             'Your account is currently inactive. Please complete the activation to start earning.',
             {
                 parse_mode: 'Markdown',
-                reply_markup: Markup.inlineKeyboard([
+                ...Markup.inlineKeyboard([
                     Markup.button.callback('💳 Activate Account (₦1,000)', 'start_deposit')
-                ]).reply_markup
+                ])
             }
         );
     } else {

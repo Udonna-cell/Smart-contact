@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS deposits (
     type ENUM('ACTIVATION', 'BUY_SLOTS', 'UPGRADE_RATE'),
     amount_ngn DECIMAL(12,2) NOT NULL,
     reference_code VARCHAR(255) UNIQUE NOT NULL,
+    paystack_reference VARCHAR(255),
+    paystack_url VARCHAR(500),
     proof_file_id VARCHAR(255),
     sender_name VARCHAR(255),
     status ENUM('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED') DEFAULT 'PENDING',
