@@ -19,7 +19,7 @@ export const handleStart = async (ctx) => {
             'To get started, please activate your account:',
             {
                 parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([
+                reply_markup: Markup.inlineKeyboard([
                     Markup.button.callback('💳 Activate Account (₦1,000)', 'start_deposit')
                 ]).reply_markup
             }
